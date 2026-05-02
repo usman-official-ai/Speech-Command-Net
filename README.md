@@ -1,5 +1,9 @@
 # 🎤 VoiceCommandNet – Speech Command Recognition System
 
+<img width="1536" height="1024" alt="Image" src="https://github.com/user-attachments/assets/6b49a66c-0b3f-4228-ad6e-c88eb7eb7644" />
+
+
+
 VoiceCommandNet is a deep learning-based speech recognition project designed to classify and recognize voice commands from audio data. This system leverages advanced audio preprocessing techniques and neural network architectures to accurately detect spoken commands, making it suitable for real-world applications like voice assistants, smart home control, and accessibility tools.
 
 ---
