@@ -1,0 +1,7 @@
+*.tar.gz
+*.zip
+*.npy
+*.wav
+__pycache__/
+*.pyc
+.ipynb_checkpoints/

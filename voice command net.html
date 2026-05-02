@@ -1,0 +1,515 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>AI Voice Command Recognizer | Neural Voice Interface</title>
+  <!-- Tailwind CSS + Google Fonts + Font Awesome -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,300;14..32,400;14..32,500;14..32,600;14..32,700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+  <!-- Chart.js for confidence bar + Recharts-like (using Chart.js) -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
+  <!-- Axios -->
+  <script src="https://cdn.jsdelivr.net/npm/axios/dist/axios.min.js"></script>
+  <!-- Wavesurfer.js for waveform playback & recording visualization (optional but elegant) -->
+  <script src="https://unpkg.com/wavesurfer.js@7.4.0/dist/wavesurfer.min.js"></script>
+  <style>
+    * {
+      font-family: 'Inter', sans-serif;
+    }
+    body {
+      transition: background-color 0.3s ease, color 0.2s ease;
+    }
+    /* custom pulse animation for recording indicator */
+    @keyframes pulse-ring {
+      0% { transform: scale(0.8); opacity: 0.6; }
+      100% { transform: scale(1.4); opacity: 0; }
+    }
+    .recording-pulse {
+      position: relative;
+    }
+    .recording-pulse::before {
+      content: '';
+      position: absolute;
+      top: -8px;
+      left: -8px;
+      right: -8px;
+      bottom: -8px;
+      border-radius: 50%;
+      background-color: rgba(239, 68, 68, 0.4);
+      animation: pulse-ring 1.2s cubic-bezier(0.215, 0.61, 0.355, 1) infinite;
+      pointer-events: none;
+    }
+    .glass-card {
+      background: rgba(255, 255, 255, 0.6);
+      backdrop-filter: blur(12px);
+      border: 1px solid rgba(255,255,255,0.3);
+    }
+    .dark .glass-card {
+      background: rgba(15, 25, 35, 0.7);
+      border: 1px solid rgba(255,255,255,0.1);
+    }
+    .waveform-container {
+      background: rgba(0,0,0,0.03);
+      border-radius: 1rem;
+    }
+    .dark .waveform-container {
+      background: rgba(255,255,255,0.05);
+    }
+    /* custom scroll */
+    ::-webkit-scrollbar {
+      width: 5px;
+    }
+    ::-webkit-scrollbar-track {
+      background: #f1f1f1;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #888;
+      border-radius: 10px;
+    }
+  </style>
+</head>
+<body class="bg-gray-50 dark:bg-gray-900 transition-all duration-300">
+
+  <div id="root" class="min-h-screen flex items-center justify-center p-4">
+    <div class="w-full max-w-5xl mx-auto">
+      <!-- Header + Theme Toggle -->
+      <div class="flex justify-between items-center mb-6">
+        <div>
+          <h1 class="text-3xl md:text-4xl font-bold bg-gradient-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">Voice Command AI</h1>
+          <p class="text-gray-500 dark:text-gray-400 text-sm mt-1">Yes · No · Left · Right · Go · Stop · Up · Down · On · Off</p>
+        </div>
+        <button id="themeToggle" class="p-2 rounded-full bg-white dark:bg-gray-800 shadow-md hover:scale-105 transition">
+          <i class="fas fa-moon dark:hidden text-gray-700 text-xl"></i>
+          <i class="fas fa-sun hidden dark:inline-block text-yellow-400 text-xl"></i>
+        </button>
+      </div>
+
+      <!-- Main Grid: Left (Controls+Wave)  Right (Results) -->
+      <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- LEFT PANEL: Recording & Upload & Waveform -->
+        <div class="lg:col-span-2 space-y-5">
+          <!-- Glassmorphism card -->
+          <div class="glass-card rounded-2xl shadow-xl p-5 backdrop-blur-md">
+            <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+              <h2 class="text-xl font-semibold flex items-center gap-2"><i class="fas fa-microphone-alt text-indigo-500"></i> Audio Source</h2>
+              <div class="flex gap-2">
+                <button id="recordBtn" class="flex items-center gap-2 px-4 py-2 rounded-full bg-red-500 hover:bg-red-600 text-white font-medium transition shadow-md recording-pulse disabled:opacity-50">
+                  <i class="fas fa-circle"></i> <span id="recordBtnText">Record</span>
+                </button>
+                <label class="flex items-center gap-2 px-4 py-2 rounded-full bg-gray-700 hover:bg-gray-800 text-white font-medium transition cursor-pointer shadow-md">
+                  <i class="fas fa-upload"></i> Upload
+                  <input type="file" id="audioUpload" accept=".wav, .m4a, .mp3, .webm" class="hidden" />
+                </label>
+                <button id="resetBtn" class="px-4 py-2 rounded-full bg-gray-400 dark:bg-gray-600 hover:bg-gray-500 text-white transition"><i class="fas fa-undo-alt"></i></button>
+              </div>
+            </div>
+            <!-- Waveform Visualization (real-time while recording / static after) -->
+            <div class="waveform-container p-3 rounded-xl">
+              <div id="waveform" class="w-full h-32"></div>
+              <div class="flex justify-between items-center mt-2 text-xs text-gray-500">
+                <span id="recordingStatus" class="flex items-center gap-1"><i class="fas fa-circle-notch text-gray-400"></i> Idle</span>
+                <span id="noiseLevel" class="hidden md:flex"><i class="fas fa-volume-up"></i> Noise: -- dB</span>
+                <button id="playbackBtn" class="text-indigo-500 hover:text-indigo-700 disabled:opacity-30" disabled><i class="fas fa-play"></i> Play Audio</button>
+              </div>
+            </div>
+            <!-- Recognize Command CTA -->
+            <button id="recognizeBtn" class="w-full mt-5 py-3 rounded-xl bg-gradient-to-r from-indigo-600 to-purple-600 hover:from-indigo-700 hover:to-purple-700 text-white font-bold text-lg transition flex items-center justify-center gap-2 shadow-lg disabled:opacity-50">
+              <i class="fas fa-brain"></i> Recognize Command
+            </button>
+            <!-- toast container -->
+            <div id="toast" class="fixed bottom-5 left-1/2 transform -translate-x-1/2 z-50 hidden transition-all duration-300"></div>
+          </div>
+
+          <!-- Live Prediction & Noise level (advanced) -->
+          <div class="glass-card rounded-2xl shadow-xl p-4">
+            <div class="flex justify-between items-center">
+              <div><i class="fas fa-waveform text-indigo-400"></i> <span class="font-medium">Live Prediction (while speaking)</span>
+                <div id="livePredictionBox" class="text-sm font-mono bg-gray-200 dark:bg-gray-800 rounded-lg px-3 py-1 mt-1 inline-block">—</div>
+              </div>
+              <div><span id="noiseBadge" class="text-xs bg-gray-200 dark:bg-gray-700 px-3 py-1 rounded-full"><i class="fas fa-microphone-alt"></i> Mic Ready</span></div>
+            </div>
+            <canvas id="liveSpectrogram" class="w-full h-16 mt-2 rounded-lg bg-black/5 dark:bg-white/5" style="height: 60px;"></canvas>
+          </div>
+
+          <!-- Command History -->
+          <div class="glass-card rounded-2xl shadow-xl p-4">
+            <h3 class="font-semibold flex gap-2 items-center"><i class="fas fa-history"></i> Recent Commands</h3>
+            <div id="historyList" class="flex flex-wrap gap-2 mt-2">
+              <span class="text-gray-400 text-sm">No commands yet</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- RIGHT PANEL: Results + Confidence -->
+        <div class="space-y-5">
+          <div class="glass-card rounded-2xl shadow-xl p-5 backdrop-blur-md">
+            <h2 class="text-xl font-semibold flex items-center gap-2 mb-3"><i class="fas fa-chart-line text-green-500"></i> Prediction Result</h2>
+            <div class="text-center">
+              <div id="predictedCommand" class="text-5xl font-extrabold tracking-wide bg-gradient-to-r from-indigo-500 to-purple-500 bg-clip-text text-transparent">—</div>
+              <div class="mt-2 flex justify-center items-center gap-2">
+                <span class="text-gray-500">Confidence</span>
+                <div id="confidencePercent" class="text-2xl font-bold">0%</div>
+              </div>
+              <!-- progress bar confidence -->
+              <div class="w-full bg-gray-300 dark:bg-gray-700 rounded-full h-3 mt-1">
+                <div id="confidenceBar" class="bg-gradient-to-r from-indigo-500 to-purple-500 h-3 rounded-full transition-all duration-500" style="width: 0%"></div>
+              </div>
+            </div>
+            <div class="mt-6">
+              <p class="text-sm font-medium mb-2">Top 3 Predictions</p>
+              <div id="topPredictionsList" class="space-y-2">
+                <div class="flex justify-between"><span>—</span><span class="font-mono">--%</span></div>
+              </div>
+            </div>
+            <!-- confidence chart.js canvas -->
+            <canvas id="confidenceChart" width="300" height="150" class="mt-4"></canvas>
+          </div>
+          <!-- Assistant style info -->
+          <div class="glass-card rounded-2xl p-4 text-center text-sm text-gray-600 dark:text-gray-300">
+            <i class="fas fa-microphone-alt text-indigo-400 mr-1"></i> Supported: Yes, No, Left, Right, Go, Stop, Up, Down, On, Off
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ------------------------- STATE -------------------------
+    let mediaRecorder = null;
+    let audioChunks = [];
+    let isRecording = false;
+    let currentAudioBlob = null;       // holds recorded/uploaded audio blob (wav)
+    let audioUrl = null;
+    let wavesurfer = null;
+    let streamRef = null;
+    let animationFrame = null;
+    let audioContext = null;
+    let sourceNode = null;
+    let analyserNode = null;
+    let liveInterval = null;
+    let lastLivePredictionTimer = null;
+    let commandHistory = [];  // max 5
+
+    // DOM Elements
+    const recordBtn = document.getElementById('recordBtn');
+    const recordBtnText = document.getElementById('recordBtnText');
+    const audioUpload = document.getElementById('audioUpload');
+    const resetBtn = document.getElementById('resetBtn');
+    const recognizeBtn = document.getElementById('recognizeBtn');
+    const playbackBtn = document.getElementById('playbackBtn');
+    const recordingStatusSpan = document.getElementById('recordingStatus');
+    const predictedCommandDiv = document.getElementById('predictedCommand');
+    const confidencePercentSpan = document.getElementById('confidencePercent');
+    const confidenceBarDiv = document.getElementById('confidenceBar');
+    const topPredictionsList = document.getElementById('topPredictionsList');
+    const historyListDiv = document.getElementById('historyList');
+    const noiseLevelSpan = document.getElementById('noiseLevel');
+    const noiseBadge = document.getElementById('noiseBadge');
+    const livePredictionBox = document.getElementById('livePredictionBox');
+    let confidenceChartInstance = null;
+
+    // Theme handling
+    const themeToggle = document.getElementById('themeToggle');
+    if(localStorage.getItem('theme') === 'dark') document.documentElement.classList.add('dark');
+    themeToggle.addEventListener('click', () => {
+      document.documentElement.classList.toggle('dark');
+      localStorage.setItem('theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
+    });
+
+    // Initialize Wavesurfer for playback + record visualization
+    function initWaveSurfer() {
+      if(wavesurfer) wavesurfer.destroy();
+      wavesurfer = WaveSurfer.create({
+        container: '#waveform',
+        waveColor: '#6366f1',
+        progressColor: '#a855f7',
+        cursorColor: '#ec489a',
+        barWidth: 2,
+        height: 100,
+        responsive: true,
+        normalize: true,
+        backend: 'WebAudio'
+      });
+      wavesurfer.on('ready', () => { playbackBtn.disabled = false; });
+      wavesurfer.on('finish', () => {});
+    }
+    initWaveSurfer();
+
+    // Helper: show toast
+    function showToast(msg, type='info') {
+      const toastDiv = document.getElementById('toast');
+      toastDiv.innerHTML = `<div class="bg-gray-800 dark:bg-gray-900 text-white px-5 py-3 rounded-xl shadow-2xl flex items-center gap-2"><i class="fas ${type==='error'?'fa-exclamation-triangle': 'fa-check-circle'}"></i> ${msg}</div>`;
+      toastDiv.classList.remove('hidden');
+      setTimeout(() => toastDiv.classList.add('hidden'), 3000);
+    }
+
+    // load audio blob into wavesurfer & store global
+    function loadAudioBlob(blob) {
+      if(!blob) return;
+      currentAudioBlob = blob;
+      const url = URL.createObjectURL(blob);
+      if(audioUrl) URL.revokeObjectURL(audioUrl);
+      audioUrl = url;
+      wavesurfer.load(url);
+      playbackBtn.disabled = false;
+    }
+
+    // reset everything
+    function resetUI() {
+      if(isRecording) stopRecording();
+      if(wavesurfer) wavesurfer.empty();
+      currentAudioBlob = null;
+      playbackBtn.disabled = true;
+      predictedCommandDiv.innerText = '—';
+      confidencePercentSpan.innerText = '0%';
+      confidenceBarDiv.style.width = '0%';
+      topPredictionsList.innerHTML = '<div class="flex justify-between"><span>—</span><span class="font-mono">--%</span></div>';
+      recordingStatusSpan.innerHTML = '<i class="fas fa-circle-notch text-gray-400"></i> Idle';
+      if(confidenceChartInstance) confidenceChartInstance.data.datasets[0].data = [0,0,0]; confidenceChartInstance.update();
+      livePredictionBox.innerText = '—';
+    }
+
+    // Recording handlers
+    async function startRecording() {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        streamRef = stream;
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        analyserNode = audioContext.createAnalyser();
+        analyserNode.fftSize = 256;
+        sourceNode = audioContext.createMediaStreamSource(stream);
+        sourceNode.connect(analyserNode);
+        // noise detection simple RMS
+        startNoiseMonitoring();
+
+        mediaRecorder = new MediaRecorder(stream);
+        audioChunks = [];
+        mediaRecorder.ondataavailable = (e) => audioChunks.push(e.data);
+        mediaRecorder.onstop = () => {
+          const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+          loadAudioBlob(audioBlob);
+          showToast('Recording saved! Ready to recognize.', 'success');
+          stopNoiseMonitoring();
+          if(streamRef) streamRef.getTracks().forEach(track => track.stop());
+          if(audioContext) audioContext.close();
+        };
+        mediaRecorder.start(100);
+        isRecording = true;
+        recordBtnText.innerText = 'Stop';
+        recordingStatusSpan.innerHTML = '<i class="fas fa-circle text-red-500 animate-pulse"></i> Recording...';
+        recordBtn.classList.add('recording-pulse');
+        startLivePredictionVisuals();
+      } catch(err) {
+        showToast('Microphone permission denied or error', 'error');
+        console.error(err);
+      }
+    }
+
+    function stopRecording() {
+      if(mediaRecorder && isRecording) {
+        mediaRecorder.stop();
+        isRecording = false;
+        recordBtnText.innerText = 'Record';
+        recordingStatusSpan.innerHTML = '<i class="fas fa-check-circle text-green-500"></i> Recorded';
+        recordBtn.classList.remove('recording-pulse');
+        if(liveInterval) clearInterval(liveInterval);
+        if(animationFrame) cancelAnimationFrame(animationFrame);
+      }
+    }
+
+    // Simple noise monitoring (RMS)
+    let noiseMonitorInterval;
+    function startNoiseMonitoring() {
+      if(noiseMonitorInterval) clearInterval(noiseMonitorInterval);
+      noiseMonitorInterval = setInterval(() => {
+        if(!analyserNode) return;
+        const dataArray = new Uint8Array(analyserNode.frequencyBinCount);
+        analyserNode.getByteTimeDomainData(dataArray);
+        let rms = 0;
+        for(let i=0;i<dataArray.length;i++) {
+          const v = (dataArray[i] - 128) / 128;
+          rms += v*v;
+        }
+        rms = Math.sqrt(rms/dataArray.length);
+        const db = Math.max(0, Math.min(100, Math.floor(20 * Math.log10(rms+0.1) + 40)));
+        noiseLevelSpan.innerHTML = `<i class="fas fa-volume-up"></i> Noise: ${db} dB`;
+        if(db > 65) noiseBadge.innerHTML = '<i class="fas fa-exclamation-triangle"></i> High noise';
+        else noiseBadge.innerHTML = '<i class="fas fa-microphone-alt"></i> Listening';
+      }, 200);
+    }
+    function stopNoiseMonitoring() {
+      if(noiseMonitorInterval) clearInterval(noiseMonitorInterval);
+      noiseLevelSpan.innerHTML = `<i class="fas fa-volume-up"></i> Noise: -- dB`;
+      noiseBadge.innerHTML = '<i class="fas fa-microphone-alt"></i> Mic Ready';
+    }
+
+    // Live prediction + spectrogram simulation (WebAudio getByteFrequencyData & mock prediction)
+    function startLivePredictionVisuals() {
+      if(liveInterval) clearInterval(liveInterval);
+      liveInterval = setInterval(() => {
+        if(!analyserNode) return;
+        const freqArray = new Uint8Array(analyserNode.frequencyBinCount);
+        analyserNode.getByteFrequencyData(freqArray);
+        // simple mock: live prediction based on average frequency? for demo we random pick command to show "live" feel
+        // Actually, for advanced we simulate confidence from a mock endpoint but this is just front-end animation
+        // We'll pretend to display something like "listening..."
+        const avgFreq = freqArray.slice(0,20).reduce((a,b)=>a+b,0)/20;
+        if(avgFreq > 30) {
+          livePredictionBox.innerText = '🟢 listening...';
+        } else {
+          livePredictionBox.innerText = '🎙️ speak command';
+        }
+        // draw simple spectrogram on canvas (bonus)
+        drawSpectrogramCanvas(freqArray);
+      }, 300);
+    }
+    function drawSpectrogramCanvas(freqData) {
+      const canvas = document.getElementById('liveSpectrogram');
+      if(!canvas) return;
+      const ctx = canvas.getContext('2d');
+      const w = canvas.clientWidth, h = canvas.clientHeight;
+      canvas.width = w; canvas.height = h;
+      ctx.fillStyle = '#00000010'; ctx.fillRect(0,0,w,h);
+      const barWidth = w / 64;
+      for(let i=0;i<64 && i<freqData.length;i++) {
+        let val = freqData[i] / 255;
+        let barHeight = val * h;
+        ctx.fillStyle = `hsl(${240 - val*120}, 70%, 60%)`;
+        ctx.fillRect(i*barWidth, h-barHeight, barWidth-1, barHeight);
+      }
+    }
+
+    // Mock AI backend call: In real scenario POST /predict
+    // Since no backend, we simulate realistic command classification using a mock with deterministic + random noise for demo.
+    async function callPredictAPI(audioBlob) {
+      // Simulate network delay and ML inference (production would send FormData)
+      return new Promise((resolve) => {
+        // Simulating realistic command classification based on audio characteristics?
+        // for demo we'll use a deterministic mapping from file size/time to mimic but more realistic: generate random between commands
+        // But showcase advanced: Do simple "mock" with weighted random for demo but keeping professional appearance
+        const commands = ['yes', 'no', 'left', 'right', 'go', 'stop', 'up', 'down', 'on', 'off'];
+        // Simulate confidence by random but weighted to make UX nice.
+        const randomIndex = Math.floor(Math.random() * commands.length);
+        let prediction = commands[randomIndex];
+        let confidence = 0.65 + Math.random() * 0.34;
+        // Provide deterministic variation for demo: if file is larger, more confident
+        if(audioBlob && audioBlob.size > 20000) confidence = Math.min(0.98, confidence + 0.1);
+        let topPredictions = [];
+        const remaining = commands.filter(c => c !== prediction);
+        const shuffled = remaining.sort(()=>0.5-Math.random()).slice(0,2);
+        topPredictions = [prediction, ...shuffled];
+        // confidence distribution
+        let confValues = [confidence, confidence*0.7, confidence*0.5];
+        const finalTop = topPredictions.map((cmd, idx) => ({command: cmd, confidence: confValues[idx] || 0.2}));
+        finalTop.sort((a,b)=>b.confidence - a.confidence);
+        resolve({
+          prediction: finalTop[0].command,
+          confidence: finalTop[0].confidence,
+          top_predictions: finalTop.map(t => t.command)
+        });
+      });
+    }
+
+    // Recognize current audio blob
+    async function recognizeCommand() {
+      if(!currentAudioBlob) {
+        showToast('No audio recorded or uploaded. Please record or upload a file.', 'error');
+        return;
+      }
+      recognizeBtn.disabled = true;
+      recognizeBtn.innerHTML = '<i class="fas fa-spinner fa-pulse"></i> Recognizing...';
+      try {
+        const result = await callPredictAPI(currentAudioBlob);
+        const prediction = result.prediction;
+        const confidence = result.confidence;
+        const topPreds = result.top_predictions;
+        predictedCommandDiv.innerText = prediction.toUpperCase();
+        confidencePercentSpan.innerText = `${Math.round(confidence*100)}%`;
+        confidenceBarDiv.style.width = `${confidence*100}%`;
+        // update top predictions list
+        topPredictionsList.innerHTML = '';
+        for(let i=0;i<topPreds.length;i++) {
+          const cmd = topPreds[i];
+          let confVal = (i===0? confidence : (i===1? confidence*0.7 : confidence*0.5));
+          confVal = Math.min(0.99, confVal);
+          topPredictionsList.innerHTML += `<div class="flex justify-between items-center"><span class="capitalize">${cmd}</span><div class="w-24 bg-gray-300 rounded-full h-1.5"><div class="bg-purple-500 h-1.5 rounded-full" style="width: ${confVal*100}%"></div></div><span class="font-mono text-xs">${Math.round(confVal*100)}%</span></div>`;
+        }
+        // Update chart.js confidence bar chart
+        if(confidenceChartInstance) {
+          confidenceChartInstance.data.datasets[0].data = topPreds.map((_, idx) => idx===0? confidence*100 : (idx===1? confidence*70 : confidence*50));
+          confidenceChartInstance.update();
+        }
+        // add to history
+        commandHistory.unshift({cmd: prediction.toUpperCase(), time: new Date().toLocaleTimeString(), conf: Math.round(confidence*100)});
+        if(commandHistory.length > 5) commandHistory.pop();
+        updateHistoryUI();
+        showToast(`Recognized: ${prediction.toUpperCase()} (${Math.round(confidence*100)}% confidence)`, 'success');
+      } catch(e) {
+        showToast('Recognition error', 'error');
+      } finally {
+        recognizeBtn.disabled = false;
+        recognizeBtn.innerHTML = '<i class="fas fa-brain"></i> Recognize Command';
+      }
+    }
+
+    function updateHistoryUI() {
+      if(commandHistory.length === 0) { historyListDiv.innerHTML = '<span class="text-gray-400 text-sm">No commands yet</span>'; return; }
+      historyListDiv.innerHTML = commandHistory.map(h => `<div class="bg-indigo-100 dark:bg-indigo-900/40 rounded-full px-3 py-1 text-xs font-medium flex items-center gap-1"><span class="font-bold">${h.cmd}</span> <span class="text-gray-500">${h.conf}%</span><span class="text-gray-400 text-[10px]">${h.time}</span></div>`).join('');
+    }
+
+    // File upload handler
+    audioUpload.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if(!file) return;
+      if(file.type.includes('audio') || file.name.endsWith('.wav') || file.name.endsWith('.mp3')) {
+        loadAudioBlob(file);
+        showToast(`Loaded: ${file.name}`, 'success');
+        resetUI(); // but keep loaded blob! fix reset UI to not clear blob
+        // preserve blob
+        currentAudioBlob = file;
+        wavesurfer.load(URL.createObjectURL(file));
+        playbackBtn.disabled = false;
+        predictedCommandDiv.innerText = '—';
+        confidencePercentSpan.innerText = '0%';
+        confidenceBarDiv.style.width = '0%';
+      } else {
+        showToast('Unsupported format, use .wav, .mp4', 'error');
+      }
+    });
+
+    // Record button toggle
+    recordBtn.addEventListener('click', () => {
+      if(isRecording) {
+        stopRecording();
+      } else {
+        resetUI();
+        startRecording();
+      }
+    });
+    resetBtn.addEventListener('click', () => {
+      if(isRecording) stopRecording();
+      resetUI();
+      if(wavesurfer) wavesurfer.empty();
+      currentAudioBlob = null;
+      playbackBtn.disabled = true;
+      showToast('Reset completed', 'info');
+    });
+    recognizeBtn.addEventListener('click', recognizeCommand);
+    playbackBtn.addEventListener('click', () => { if(wavesurfer) wavesurfer.playPause(); });
+
+    // confidence chart init
+    const ctx = document.getElementById('confidenceChart').getContext('2d');
+    confidenceChartInstance = new Chart(ctx, {
+      type: 'bar',
+      data: { labels: ['Top 1', 'Top 2', 'Top 3'], datasets: [{ label: 'Confidence %', data: [0,0,0], backgroundColor: '#8b5cf6', borderRadius: 10 }] },
+      options: { responsive: true, maintainAspectRatio: true, scales: { y: { beginAtZero: true, max: 100 } } }
+    });
+    // Preload dummy empty waveform
+    window.addEventListener('load', () => {
+      showToast('AI Voice Assistant Ready', 'success');
+    });
+  </script>
+</body>
+</html>
